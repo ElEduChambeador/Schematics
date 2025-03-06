@@ -1,0 +1,1 @@
+pyinstaller --onefile --noconsole Master_Design_Hub_Pre_Selection_Review_GUI.py
