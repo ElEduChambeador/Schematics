@@ -3,22 +3,18 @@ import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-def select_original_bom():
-    root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(
+def select_original_bom(root):
+    return filedialog.askopenfilename(
+        parent=root,
         title="Select Original BOM CSV File",
         filetypes=[("CSV files", "*.csv")]
     )
-    return file_path
 
-def select_csv_folder():
-    root = tk.Tk()
-    root.withdraw()
-    folder_path = filedialog.askdirectory(
+def select_csv_folder(root):
+    return filedialog.askdirectory(
+        parent=root,
         title="Select Folder Containing CSV BOM Files"
     )
-    return folder_path
 
 def get_all_csv_files(folder_path, original_bom_path):
     csv_files = []
@@ -33,68 +29,114 @@ def get_all_csv_files(folder_path, original_bom_path):
                     continue
     return csv_files
 
+def read_csv_with_fallback(file_path):
+    encodings = ['utf-8', 'latin1', 'iso-8859-1']
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(file_path, encoding=encoding)
+            print(f"Successfully read {file_path} with {encoding} encoding")
+            return df
+        except UnicodeDecodeError:
+            print(f"Failed to read {file_path} with {encoding} encoding")
+            continue
+        except Exception as e:
+            print(f"Error reading {file_path} with {encoding}: {str(e)}")
+            return None
+    print(f"Could not read {file_path} with any encoding")
+    return None
+
 def update_bom_files(original_bom_path, csv_folder_path):
     try:
         # Read the original BOM
-        original_bom = pd.read_csv(original_bom_path)
+        original_bom = read_csv_with_fallback(original_bom_path)
+        if original_bom is None:
+            messagebox.showerror("Error", f"Could not read original BOM file: {original_bom_path}")
+            return
         required_columns = ['Part', 'Value', 'Device', 'Package', 'Description', 'MF']
         if not all(col in original_bom.columns for col in required_columns):
             messagebox.showerror("Error", "Original BOM is missing required columns!")
             return
 
-        # Get all CSV files in the folder and subfolders
+        # Convert Part column to uppercase
+        original_bom['Part'] = original_bom['Part'].str.strip().str.upper()
+
+        # Get all CSV files
         csv_files = get_all_csv_files(csv_folder_path, original_bom_path)
         if not csv_files:
             messagebox.showinfo("Info", "No CSV files found in the selected folder or subfolders!")
             return
 
-        # Process each CSV file
+        updated_files = []
         for csv_file in csv_files:
             try:
-                # Read the CSV file
-                csv_bom = pd.read_csv(csv_file)
-                if not all(col in csv_bom.columns for col in required_columns):
-                    print(f"Skipping {csv_file}: Missing required columns")
+                # Read and validate the CSV file
+                csv_bom = read_csv_with_fallback(csv_file)
+                if csv_bom is None:
+                    print(f"Skipping {csv_file}: Could not read file")
+                    continue
+                if csv_bom.empty:
+                    print(f"Skipping {csv_file}: Empty file")
+                    continue
+                if 'Part' not in csv_bom.columns:
+                    print(f"Skipping {csv_file}: Missing 'Part' column")
                     continue
 
-                # Remove any "Unnamed" columns from the input CSV
+                # Remove unnamed columns
                 csv_bom = csv_bom.loc[:, ~csv_bom.columns.str.contains('^Unnamed')]
 
-                # Create a copy to avoid modifying the original dataframe
-                updated_bom = csv_bom.copy()
+                # Convert Part column to uppercase
+                csv_bom['Part'] = csv_bom['Part'].str.strip().str.upper()
 
-                # Update Description and MF columns based on Part
-                for index, row in updated_bom.iterrows():
-                    part = row['Part']
-                    match = original_bom[original_bom['Part'] == part]
-                    if not match.empty:
-                        updated_bom.at[index, 'Description'] = match.iloc[0]['Description']
-                        updated_bom.at[index, 'MF'] = match.iloc[0]['MF']
+                # Ensure all required columns exist, filling with empty strings if missing
+                for col in ['Value', 'Device', 'Package', 'Description', 'MF']:
+                    if col not in csv_bom.columns:
+                        csv_bom[col] = ''
 
-                # Save the updated CSV without the index
-                updated_bom.to_csv(csv_file, index=False)
+                # Update using merge
+                columns_to_update = ['Value', 'Device', 'Package', 'Description', 'MF']
+                csv_bom = csv_bom.drop(columns=columns_to_update, errors='ignore')
+                updated_bom = csv_bom.merge(
+                    original_bom[['Part', 'Value', 'Device', 'Package', 'Description', 'MF']],
+                    on='Part',
+                    how='left'
+                )
+
+                # Fill NaN values with empty strings for updated columns
+                updated_bom[columns_to_update] = updated_bom[columns_to_update].fillna('')
+
+                # Save the updated CSV
+                updated_bom.to_csv(csv_file, index=False, encoding='utf-8')
+                updated_files.append(csv_file)
                 print(f"Updated {csv_file}")
 
             except Exception as e:
                 print(f"Error processing {csv_file}: {str(e)}")
 
-        messagebox.showinfo("Success", "All CSV files have been updated successfully!")
+        if updated_files:
+            messagebox.showinfo("Success", f"Updated {len(updated_files)} files:\n" + "\n".join(updated_files))
+        else:
+            messagebox.showinfo("Info", "No files were updated due to errors or missing data.")
 
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
 def main():
-    original_bom_path = select_original_bom()
-    if not original_bom_path:
-        messagebox.showerror("Error", "No original BOM file selected!")
-        return
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        original_bom_path = select_original_bom(root)
+        if not original_bom_path:
+            messagebox.showerror("Error", "No original BOM file selected!")
+            return
 
-    csv_folder_path = select_csv_folder()
-    if not csv_folder_path:
-        messagebox.showerror("Error", "No folder selected!")
-        return
+        csv_folder_path = select_csv_folder(root)
+        if not csv_folder_path:
+            messagebox.showerror("Error", "No folder selected!")
+            return
 
-    update_bom_files(original_bom_path, csv_folder_path)
+        update_bom_files(original_bom_path, csv_folder_path)
+    finally:
+        root.destroy()
 
 if __name__ == "__main__":
     main()

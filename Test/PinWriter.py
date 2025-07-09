@@ -78,7 +78,7 @@ def main():
     initial_pin = 0
     multiplier = 1
     tsequence_or_flist = False  # Change to True for sequence, False for list
-    pin_list = ['M4_ANALOG_IU_VU', 'M4_ANALOG_IDCLINK', 'PWM_GATE2', 'RELAY2_OUT', 'M4_PWM_WL', 'M4_PWM_VL', 'M4_PWM_UH', 'M4_ENABLE_GATE_DRIVER', 'PWM_GATE1']
+    pin_list = ['PINS']
 
     print("Waiting to detect backspace... (Press Delete to exit)")
 
